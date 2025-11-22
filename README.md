@@ -13,6 +13,12 @@ onnxruntime
 # Usage
 Open the Colaboratory link, run the cells from top to bottom, and access the “Running on public URL” shown in the output.
 
+<br><br>
+Alternatively, install the required packages locally, run the command below, and access the “Running on local URL” shown in the output.
+```python
+python gradio_app.py
+```
+
 # Contents
 | No | Model Name | Colab Link | Overview |
 | --- | --- | --- | --- |
