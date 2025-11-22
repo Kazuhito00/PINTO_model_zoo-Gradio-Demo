@@ -10,6 +10,9 @@ onnx
 onnxruntime
 ```
 
+# Usage
+Open the Colaboratory link, run the cells from top to bottom, and access the “Running on public URL” shown in the output.
+
 # Contents
 | No | Model Name | Colab Link | Overview |
 | --- | --- | --- | --- |
