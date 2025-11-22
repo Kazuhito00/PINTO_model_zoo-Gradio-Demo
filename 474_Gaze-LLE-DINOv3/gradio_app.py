@@ -1398,7 +1398,9 @@ def process_video(
     frame_count = 0
     start_time = time.time()
 
-    for frame_count in progress.tqdm(range(total_frames), desc=f"Processing video ({total_frames} frames)"):
+    for frame_count in progress.tqdm(
+        range(total_frames), desc=f"Processing video ({total_frames} frames)"
+    ):
         ret, frame = cap.read()
         if not ret:
             break
@@ -1592,36 +1594,74 @@ def create_gradio_interface():
 
                         with gr.Accordion("Detection Settings", open=True):
                             video_obj_threshold = gr.Slider(
-                                0.0, 1.0, 0.35, label="Object Score Threshold", step=0.05
+                                0.0,
+                                1.0,
+                                0.35,
+                                label="Object Score Threshold",
+                                step=0.05,
                             )
                             video_attr_threshold = gr.Slider(
-                                0.0, 1.0, 0.70, label="Attribute Score Threshold", step=0.05
+                                0.0,
+                                1.0,
+                                0.70,
+                                label="Attribute Score Threshold",
+                                step=0.05,
                             )
                             video_keypoint_threshold = gr.Slider(
-                                0.0, 1.0, 0.30, label="Keypoint Score Threshold", step=0.05
+                                0.0,
+                                1.0,
+                                0.30,
+                                label="Keypoint Score Threshold",
+                                step=0.05,
                             )
 
                         with gr.Accordion("Visualization Settings", open=True):
-                            video_enable_skeleton = gr.Checkbox(True, label="Enable Skeleton Drawing")
-                            video_enable_gaze_heatmap = gr.Checkbox(True, label="Enable Gaze Heatmap")
-                            video_gaze_alpha = gr.Slider(0.0, 1.0, 0.35, label="Gaze Heatmap Alpha", step=0.05)
+                            video_enable_skeleton = gr.Checkbox(
+                                True, label="Enable Skeleton Drawing"
+                            )
+                            video_enable_gaze_heatmap = gr.Checkbox(
+                                True, label="Enable Gaze Heatmap"
+                            )
+                            video_gaze_alpha = gr.Slider(
+                                0.0, 1.0, 0.35, label="Gaze Heatmap Alpha", step=0.05
+                            )
                             video_keypoint_mode = gr.Radio(
-                                ["dot", "box", "both"], value="dot", label="Keypoint Drawing Mode"
+                                ["dot", "box", "both"],
+                                value="dot",
+                                label="Keypoint Drawing Mode",
                             )
 
                         with gr.Accordion("Attribute Settings", open=False):
-                            video_enable_gender = gr.Checkbox(True, label="Enable Gender Detection")
-                            video_enable_generation = gr.Checkbox(True, label="Enable Generation Detection (Adult/Child)")
-                            video_enable_headpose = gr.Checkbox(True, label="Enable Head Pose Detection")
-                            video_enable_hand_lr = gr.Checkbox(True, label="Enable Hand L/R Detection")
+                            video_enable_gender = gr.Checkbox(
+                                True, label="Enable Gender Detection"
+                            )
+                            video_enable_generation = gr.Checkbox(
+                                True, label="Enable Generation Detection (Adult/Child)"
+                            )
+                            video_enable_headpose = gr.Checkbox(
+                                True, label="Enable Head Pose Detection"
+                            )
+                            video_enable_hand_lr = gr.Checkbox(
+                                True, label="Enable Hand L/R Detection"
+                            )
 
                         with gr.Accordion("Advanced Settings", open=False):
-                            video_enable_tracking = gr.Checkbox(True, label="Enable Tracking")
-                            video_enable_face_mosaic = gr.Checkbox(False, label="Enable Face Mosaic")
-                            video_enable_distance = gr.Checkbox(True, label="Enable Distance Measurement")
-                            video_camera_fov = gr.Slider(30, 180, 90, label="Camera Horizontal FOV", step=1)
+                            video_enable_tracking = gr.Checkbox(
+                                True, label="Enable Tracking"
+                            )
+                            video_enable_face_mosaic = gr.Checkbox(
+                                False, label="Enable Face Mosaic"
+                            )
+                            video_enable_distance = gr.Checkbox(
+                                True, label="Enable Distance Measurement"
+                            )
+                            video_camera_fov = gr.Slider(
+                                30, 180, 90, label="Camera Horizontal FOV", step=1
+                            )
 
-                        process_video_btn = gr.Button("Process Video", variant="primary")
+                        process_video_btn = gr.Button(
+                            "Process Video", variant="primary"
+                        )
 
                     with gr.Column(scale=1):
                         video_output = gr.Video(label="Output Video")
@@ -1659,7 +1699,6 @@ def create_gradio_interface():
                             sources=["webcam"],
                             streaming=True,
                             type="numpy",
-                            mirror_webcam=False,
                             format="jpeg",
                         )
 
