@@ -22,6 +22,7 @@ python gradio_app.py
 # Contents
 | No | Model Name | Colab Link | Overview |
 | --- | --- | --- | --- |
+| 473 | [HISDF](https://github.com/PINTO0309/PINTO_model_zoo/tree/main/473_HISDF) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Kazuhito00/PINTO_model_zoo-Gradio-Demo/blob/main/473_HISDF/gradio_colab_app.ipynb) | A multitask AI model that simultaneously estimates human detection, pose, depth, and attributes. |
 | 474 | [Gaze-LLE-DINOv3](https://github.com/PINTO0309/PINTO_model_zoo/tree/main/474_Gaze-LLE-DINOv3) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Kazuhito00/PINTO_model_zoo-Gradio-Demo/blob/main/474_Gaze-LLE-DINOv3/gradio_colab_app.ipynb) | Performs full-body detection, attribute estimation, <br>gaze heatmap generation, and skeleton <br>drawing using DEIMv2 and Gazelle. |
 
 # Reference
