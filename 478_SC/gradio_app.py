@@ -995,9 +995,9 @@ def process_image(
         )
         if body_crop is None or body_crop.size == 0:
             continue
-        rgb_body_crop = cv2.cvtColor(body_crop, cv2.COLOR_BGR2RGB)
+        # Gradio's input is already in RGB format, no conversion needed
         try:
-            prob_sitting = sc_model(image=rgb_body_crop)
+            prob_sitting = sc_model(image=body_crop)
         except Exception:
             continue
         box.body_prob_sitting = prob_sitting
