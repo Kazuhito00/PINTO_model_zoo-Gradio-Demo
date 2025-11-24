@@ -21,8 +21,6 @@ import gradio as gr
 from collections import deque
 from typing import Deque
 
-from bbalg.main import state_verdict
-
 # Set Gradio language to English
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 os.environ["GRADIO_DEFAULT_DIR"] = "."
@@ -32,9 +30,6 @@ os.environ["GRADIO_DEFAULT_DIR"] = "."
 # ============================================================================
 
 AVERAGE_HEAD_WIDTH: float = 0.16 + 0.10  # 16cm + Margin Compensation
-BODY_LONG_HISTORY_SIZE = 7
-BODY_SHORT_HISTORY_SIZE = 4
-SITTING_LABEL = "!! Sitting !!"
 
 BOX_COLORS = [
     [(216, 67, 21), "Front"],
@@ -88,19 +83,6 @@ class Box:
     body_prob_sitting: float = -1.0
     body_state: int = -1  # -1: Unknown, 0: not_sitting, 1: sitting
     body_label: str = ""
-
-
-class BodyStateHistory:
-    def __init__(self, long_size: int, short_size: int) -> None:
-        self.long_history: Deque[bool] = deque(maxlen=long_size)
-        self.short_history: Deque[bool] = deque(maxlen=short_size)
-        self.label: str = ""
-        self.interval_active: bool = False
-
-    def append(self, state: bool) -> None:
-        """Push latest per-frame boolean into both buffers."""
-        self.long_history.append(state)
-        self.short_history.append(state)
 
 
 class SimpleSortTracker:
@@ -830,11 +812,7 @@ deimv2_model = None
 sc_model = None
 tracker = SimpleSortTracker()
 stream_tracker = SimpleSortTracker()  # Separate tracker for streaming
-sitting_tracker = SimpleSortTracker()  # Tracker for sitting detection
-stream_sitting_tracker = SimpleSortTracker()  # Separate sitting tracker for streaming
 track_color_cache: Dict[int, np.ndarray] = {}  # Track ID to color mapping
-body_state_histories: Dict[int, BodyStateHistory] = {}  # Track ID to sitting history
-stream_body_state_histories: Dict[int, BodyStateHistory] = {}  # Stream sitting history
 
 # Streaming frame management
 stream_lock = threading.Lock()
@@ -931,8 +909,6 @@ def process_image(
     attr_threshold: float = 0.70,
     keypoint_threshold: float = 0.30,
     sitting_threshold: float = 0.50,
-    sitting_history_long: int = 7,
-    sitting_history_short: int = 4,
     enable_skeleton: bool = True,
     enable_gender: bool = True,
     enable_generation: bool = True,
@@ -946,13 +922,11 @@ def process_image(
     use_stream_tracker: bool = False,
 ) -> Tuple[np.ndarray, str, float]:
     """Process image with DEIMv2 and SC models."""
-    global deimv2_model, sc_model, tracker, stream_tracker, sitting_tracker, stream_sitting_tracker
-    global track_color_cache, body_state_histories, stream_body_state_histories
+    global deimv2_model, sc_model, tracker, stream_tracker
+    global track_color_cache
 
-    # Select trackers based on context
+    # Select tracker based on context
     active_tracker = stream_tracker if use_stream_tracker else tracker
-    active_sitting_tracker = stream_sitting_tracker if use_stream_tracker else sitting_tracker
-    active_histories = stream_body_state_histories if use_stream_tracker else body_state_histories
 
     if deimv2_model is None or sc_model is None:
         return image, "Error: Models not initialized. Please check model paths.", 0.0
@@ -1002,68 +976,7 @@ def process_image(
             continue
         box.body_prob_sitting = prob_sitting
         box.body_state = 1 if prob_sitting >= sitting_threshold else 0
-
-    # Apply sitting tracking
-    body_boxes = [box for box in boxes if box.classid == 0]
-    active_sitting_tracker.update(body_boxes)
-
-    def get_sitting_history(track_id: int) -> BodyStateHistory:
-        history = active_histories.get(track_id)
-        if history is None:
-            history = BodyStateHistory(sitting_history_long, sitting_history_short)
-            active_histories[track_id] = history
-        return history
-
-    matched_sitting_track_ids: set[int] = set()
-    for body_box in body_boxes:
-        if body_box.track_id <= 0:
-            continue
-        matched_sitting_track_ids.add(body_box.track_id)
-        history = get_sitting_history(body_box.track_id)
-        detection_state = bool(body_box.body_state == 1)
-        history.append(detection_state)
-        (
-            state_interval_judgment,
-            state_start_judgment,
-            state_end_judgment,
-        ) = state_verdict(
-            long_tracking_history=history.long_history,
-            short_tracking_history=history.short_history,
-        )
-        history.interval_active = state_interval_judgment
-        if state_interval_judgment:
-            history.label = SITTING_LABEL
-        elif state_end_judgment:
-            history.label = ""
-        body_box.body_label = history.label
-        body_box.body_state = 1 if history.interval_active else 0
-
-    current_sitting_track_ids = {track["id"] for track in active_sitting_tracker.tracks}
-    unmatched_sitting_track_ids = current_sitting_track_ids - matched_sitting_track_ids
-    for track_id in unmatched_sitting_track_ids:
-        history = get_sitting_history(track_id)
-        history.append(False)
-        (
-            state_interval_judgment,
-            state_start_judgment,
-            state_end_judgment,
-        ) = state_verdict(
-            long_tracking_history=history.long_history,
-            short_tracking_history=history.short_history,
-        )
-        history.interval_active = state_interval_judgment
-        if state_interval_judgment:
-            history.label = SITTING_LABEL
-        elif state_end_judgment:
-            history.label = ""
-
-    stale_history_ids = [
-        track_id
-        for track_id in list(active_histories.keys())
-        if track_id not in current_sitting_track_ids
-    ]
-    for track_id in stale_history_ids:
-        active_histories.pop(track_id, None)
+        box.body_label = ""  # No history-based label
 
     # Apply tracking
     if enable_tracking:
@@ -1145,20 +1058,14 @@ def process_image(
         # Draw attributes text
         if classid == 0:  # Body
             # Display sitting information
-            if box.body_label:
-                # Confirmed sitting with history-based label
-                attr_txt = f"{box.body_label} {box.body_prob_sitting:.3f}"
-                sitting_label_active = True
-            elif box.body_prob_sitting >= sitting_threshold:
+            if box.body_prob_sitting >= sitting_threshold:
                 # Sitting detected by probability threshold
                 attr_txt = f"Sitting {box.body_prob_sitting:.3f}"
-                sitting_label_active = False
             else:
                 # Not sitting (probability below threshold)
                 attr_txt = f"Not Sitting {box.body_prob_sitting:.3f}"
-                sitting_label_active = False
 
-            attr_color = (0, 0, 255) if sitting_label_active else color
+            attr_color = color
 
             cv2.putText(
                 debug_image,
@@ -1333,8 +1240,6 @@ def process_image_stream(
     attr_threshold: float = 0.70,
     keypoint_threshold: float = 0.30,
     sitting_threshold: float = 0.50,
-    sitting_history_long: int = 7,
-    sitting_history_short: int = 4,
     enable_skeleton: bool = True,
     enable_gender: bool = True,
     enable_generation: bool = True,
@@ -1372,8 +1277,6 @@ def process_image_stream(
             attr_threshold,
             keypoint_threshold,
             sitting_threshold,
-            sitting_history_long,
-            sitting_history_short,
             enable_skeleton,
             enable_gender,
             enable_generation,
@@ -1405,8 +1308,6 @@ def process_video(
     attr_threshold: float = 0.70,
     keypoint_threshold: float = 0.30,
     sitting_threshold: float = 0.50,
-    sitting_history_long: int = 7,
-    sitting_history_short: int = 4,
     enable_skeleton: bool = True,
     enable_gender: bool = True,
     enable_generation: bool = True,
@@ -1420,7 +1321,7 @@ def process_video(
     progress: gr.Progress = gr.Progress(),
 ) -> str:
     """Process video file frame by frame."""
-    global tracker, sitting_tracker, track_color_cache, body_state_histories
+    global tracker, track_color_cache
 
     if video_path is None:
         return None
@@ -1430,9 +1331,7 @@ def process_video(
 
     # Reset trackers and caches for new video
     tracker = SimpleSortTracker()
-    sitting_tracker = SimpleSortTracker()
     track_color_cache.clear()
-    body_state_histories.clear()
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -1466,8 +1365,6 @@ def process_video(
             attr_threshold,
             keypoint_threshold,
             sitting_threshold,
-            sitting_history_long,
-            sitting_history_short,
             enable_skeleton,
             enable_gender,
             enable_generation,
@@ -1540,20 +1437,6 @@ def create_gradio_interface():
                                 label="Sitting Classification Threshold",
                                 step=0.05,
                             )
-                            sitting_history_long = gr.Slider(
-                                1,
-                                30,
-                                7,
-                                label="Sitting History Size (Long)",
-                                step=1,
-                            )
-                            sitting_history_short = gr.Slider(
-                                1,
-                                20,
-                                4,
-                                label="Sitting History Size (Short)",
-                                step=1,
-                            )
 
                         with gr.Accordion("Visualization Settings", open=True):
                             enable_skeleton = gr.Checkbox(
@@ -1606,9 +1489,9 @@ def create_gradio_interface():
                 )
 
                 # Process button click
-                def process_with_overlay(img, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
+                def process_with_overlay(img, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
                     return process_image(
-                        img, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
+                        img, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
                     )[0]
 
                 process_btn.click(
@@ -1619,8 +1502,6 @@ def create_gradio_interface():
                         attr_threshold,
                         keypoint_threshold,
                         sitting_threshold,
-                        sitting_history_long,
-                        sitting_history_short,
                         enable_skeleton,
                         enable_gender,
                         enable_generation,
@@ -1644,8 +1525,6 @@ def create_gradio_interface():
                         attr_threshold,
                         keypoint_threshold,
                         sitting_threshold,
-                        sitting_history_long,
-                        sitting_history_short,
                         enable_skeleton,
                         enable_gender,
                         enable_generation,
@@ -1698,20 +1577,6 @@ def create_gradio_interface():
                                 label="Sitting Classification Threshold",
                                 step=0.05,
                             )
-                            video_sitting_history_long = gr.Slider(
-                                1,
-                                30,
-                                7,
-                                label="Sitting History Size (Long)",
-                                step=1,
-                            )
-                            video_sitting_history_short = gr.Slider(
-                                1,
-                                20,
-                                4,
-                                label="Sitting History Size (Short)",
-                                step=1,
-                            )
 
                         with gr.Accordion("Visualization Settings", open=True):
                             video_enable_skeleton = gr.Checkbox(
@@ -1759,9 +1624,9 @@ def create_gradio_interface():
                         video_output = gr.Video(label="Output Video")
 
                 # Video processing event
-                def process_video_with_overlay(vid, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress=gr.Progress()):
+                def process_video_with_overlay(vid, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress=gr.Progress()):
                     return process_video(
-                        vid, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress
+                        vid, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress
                     )
 
                 process_video_btn.click(
@@ -1772,8 +1637,6 @@ def create_gradio_interface():
                         video_attr_threshold,
                         video_keypoint_threshold,
                         video_sitting_threshold,
-                        video_sitting_history_long,
-                        video_sitting_history_short,
                         video_enable_skeleton,
                         video_enable_gender,
                         video_enable_generation,
@@ -1829,20 +1692,6 @@ def create_gradio_interface():
                                 label="Sitting Classification Threshold",
                                 step=0.05,
                             )
-                            stream_sitting_history_long = gr.Slider(
-                                1,
-                                30,
-                                7,
-                                label="Sitting History Size (Long)",
-                                step=1,
-                            )
-                            stream_sitting_history_short = gr.Slider(
-                                1,
-                                20,
-                                4,
-                                label="Sitting History Size (Short)",
-                                step=1,
-                            )
 
                         with gr.Accordion("Visualization Settings", open=True):
                             stream_enable_skeleton = gr.Checkbox(
@@ -1891,9 +1740,9 @@ def create_gradio_interface():
                         )
 
                 # Real-time streaming processing
-                def process_stream_with_overlay(img, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
+                def process_stream_with_overlay(img, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
                     return process_image_stream(
-                        img, obj_th, attr_th, kp_th, sit_th, sit_h_long, sit_h_short, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
+                        img, obj_th, attr_th, kp_th, sit_th, skel, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
                     )
 
                 stream_input.stream(
@@ -1904,8 +1753,6 @@ def create_gradio_interface():
                         stream_attr_threshold,
                         stream_keypoint_threshold,
                         stream_sitting_threshold,
-                        stream_sitting_history_long,
-                        stream_sitting_history_short,
                         stream_enable_skeleton,
                         stream_enable_gender,
                         stream_enable_generation,
