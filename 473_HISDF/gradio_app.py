@@ -814,6 +814,7 @@ def process_image(
     enable_skeleton: bool = True,
     enable_depth_map_overlay: bool = False,
     enable_instance_segmentation_overlay: bool = False,
+    enable_depth_instance_overlay: bool = False,
     enable_gender: bool = True,
     enable_generation: bool = True,
     enable_headpose: bool = True,
@@ -858,8 +859,9 @@ def process_image(
         disable_headpose_identification_mode=not enable_headpose,
     )
 
-    # Depth map overlay
-    if enable_depth_map_overlay:
+    # Prepare depth colormap (for depth or depth&instance modes)
+    depth_colormap = None
+    if enable_depth_map_overlay or enable_depth_instance_overlay:
         # Resize depth_map to match image size if needed
         if depth_map.shape[:2] != (debug_image_h, debug_image_w):
             depth_map_resized = cv2.resize(depth_map, (debug_image_w, debug_image_h), interpolation=cv2.INTER_LINEAR)
@@ -869,11 +871,13 @@ def process_image(
         # depth_map is already 0-255 uint8 from HISDF._postprocess
         depth_colormap = cv2.applyColorMap(depth_map_resized, cv2.COLORMAP_JET)
 
+    # Depth map overlay (full image)
+    if enable_depth_map_overlay:
         # Blend depth colormap with original image
         alpha = 0.6
         debug_image = cv2.addWeighted(debug_image, 1.0 - alpha, depth_colormap, alpha, 0.0)
 
-    # Instance segmentation overlay
+    # Instance segmentation overlay (colored masks)
     if enable_instance_segmentation_overlay:
         body_mask_count = 0
 
@@ -915,6 +919,45 @@ def process_image(
             blended_pixels = (
                 roi[mask_binary].astype(np.float32) * (1.0 - alpha)
                 + color * alpha
+            )
+            roi[mask_binary] = blended_pixels.astype(np.uint8)
+
+    # Depth & Instance overlay (depth colormap masked by instance)
+    if enable_depth_instance_overlay and depth_colormap is not None:
+        body_mask_count = 0
+
+        for box in boxes:
+            if box.classid != 0:
+                continue
+            if box.mask is None or not isinstance(box.mask, np.ndarray) or box.mask.size == 0:
+                continue
+
+            x1 = max(0, box.x1)
+            y1 = max(0, box.y1)
+            x2 = min(debug_image_w, box.x2)
+            y2 = min(debug_image_h, box.y2)
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            roi_w = x2 - x1
+            roi_h = y2 - y1
+
+            resized_mask = cv2.resize(
+                box.mask.astype(np.float32),
+                (roi_w, roi_h),
+                interpolation=cv2.INTER_NEAREST,
+            )
+            mask_binary = resized_mask >= 0.5
+            if not np.any(mask_binary):
+                continue
+
+            alpha = 0.6
+
+            roi = debug_image[y1:y2, x1:x2]
+            depth_roi = depth_colormap[y1:y2, x1:x2]
+            blended_pixels = (
+                roi[mask_binary].astype(np.float32) * (1.0 - alpha)
+                + depth_roi[mask_binary].astype(np.float32) * alpha
             )
             roi[mask_binary] = blended_pixels.astype(np.uint8)
 
@@ -1187,6 +1230,7 @@ def process_image_stream(
     enable_skeleton: bool = True,
     enable_depth_map_overlay: bool = False,
     enable_instance_segmentation_overlay: bool = False,
+    enable_depth_instance_overlay: bool = False,
     enable_gender: bool = True,
     enable_generation: bool = True,
     enable_headpose: bool = True,
@@ -1225,6 +1269,7 @@ def process_image_stream(
             enable_skeleton,
             enable_depth_map_overlay,
             enable_instance_segmentation_overlay,
+            enable_depth_instance_overlay,
             enable_gender,
             enable_generation,
             enable_headpose,
@@ -1257,6 +1302,7 @@ def process_video(
     enable_skeleton: bool = True,
     enable_depth_map_overlay: bool = False,
     enable_instance_segmentation_overlay: bool = False,
+    enable_depth_instance_overlay: bool = False,
     enable_gender: bool = True,
     enable_generation: bool = True,
     enable_headpose: bool = True,
@@ -1315,6 +1361,7 @@ def process_video(
             enable_skeleton,
             enable_depth_map_overlay,
             enable_instance_segmentation_overlay,
+            enable_depth_instance_overlay,
             enable_gender,
             enable_generation,
             enable_headpose,
@@ -1385,8 +1432,8 @@ def create_gradio_interface():
                                 True, label="Enable Skeleton Drawing"
                             )
                             overlay_group = gr.Radio(
-                                ["none", "depth", "instance"],
-                                value="instance",
+                                ["none", "depth", "instance", "depth&instance"],
+                                value="depth&instance",
                                 label="Overlay Mode",
                             )
                             keypoint_mode = gr.Radio(
@@ -1439,8 +1486,9 @@ def create_gradio_interface():
                 def process_with_overlay(img, obj_th, attr_th, kp_th, skel, overlay, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
                     enable_depth = (overlay == "depth")
                     enable_instance = (overlay == "instance")
+                    enable_depth_instance = (overlay == "depth&instance")
                     return process_image(
-                        img, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance,
+                        img, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance, enable_depth_instance,
                         gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
                     )[0]
 
@@ -1526,8 +1574,8 @@ def create_gradio_interface():
                                 True, label="Enable Skeleton Drawing"
                             )
                             video_overlay_group = gr.Radio(
-                                ["none", "depth", "instance"],
-                                value="instance",
+                                ["none", "depth", "instance", "depth&instance"],
+                                value="depth&instance",
                                 label="Overlay Mode",
                             )
                             video_keypoint_mode = gr.Radio(
@@ -1575,8 +1623,9 @@ def create_gradio_interface():
                 def process_video_with_overlay(vid, obj_th, attr_th, kp_th, skel, overlay, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress=gr.Progress()):
                     enable_depth = (overlay == "depth")
                     enable_instance = (overlay == "instance")
+                    enable_depth_instance = (overlay == "depth&instance")
                     return process_video(
-                        vid, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance,
+                        vid, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance, enable_depth_instance,
                         gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov, progress
                     )
 
@@ -1642,8 +1691,8 @@ def create_gradio_interface():
                                 True, label="Enable Skeleton Drawing"
                             )
                             stream_overlay_group = gr.Radio(
-                                ["none", "depth", "instance"],
-                                value="instance",
+                                ["none", "depth", "instance", "depth&instance"],
+                                value="depth&instance",
                                 label="Overlay Mode",
                             )
                             stream_keypoint_mode = gr.Radio(
@@ -1692,8 +1741,9 @@ def create_gradio_interface():
                 def process_stream_with_overlay(img, obj_th, attr_th, kp_th, skel, overlay, gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov):
                     enable_depth = (overlay == "depth")
                     enable_instance = (overlay == "instance")
+                    enable_depth_instance = (overlay == "depth&instance")
                     return process_image_stream(
-                        img, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance,
+                        img, obj_th, attr_th, kp_th, skel, enable_depth, enable_instance, enable_depth_instance,
                         gender, gen, headpose, hand, track, mosaic, dist, kp_mode, fov
                     )
 
